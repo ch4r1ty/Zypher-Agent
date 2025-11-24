@@ -80,7 +80,7 @@ It's a beautiful sunny day in New York with temperatures around 52°F
 
 ## 🎥 Demo Video
 
-[\[Link to demo video\]](https://youtu.be/J_1C13fB4o4)
+[Watch Demo Video](https://youtu.be/J_1C13fB4o4)
 
 ---
 
