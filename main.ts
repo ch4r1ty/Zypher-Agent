@@ -31,10 +31,8 @@ for (const key in env) {
 // Helper function to fetch weather data using PowerShell curl
 async function getWeather(city: string): Promise<string> {
   try {
-    console.log(`[DEBUG] Fetching weather for: ${city}`);
     const cityName = city.replace(/\s+/g, "_");
     const url = `https://wttr.in/${cityName}?format=j1`;
-    console.log(`[DEBUG] URL: ${url}`);
     
     // Use PowerShell curl (Invoke-WebRequest) with proper command
     const command = new Deno.Command("powershell", {
@@ -49,13 +47,18 @@ async function getWeather(city: string): Promise<string> {
     const { code, stdout, stderr } = await command.output();
     
     if (code !== 0) {
-      const errorText = new TextDecoder().decode(stderr);
-      console.log(`[DEBUG] PowerShell error: ${errorText}`);
-      return `Unable to fetch weather data for ${city}. Error code: ${code}`;
+      const error = new TextDecoder().decode(stderr);
+      console.error(`[ERROR] PowerShell failed: ${error}`);
+      return `Unable to fetch weather data for ${city}.`;
     }
     
     const output = new TextDecoder().decode(stdout).trim();
-    console.log(`[DEBUG] Got response (${output.length} chars), parsing JSON...`);
+    
+    // Check if we got valid data
+    if (!output || output.length < 100) {
+      console.error(`[ERROR] Invalid response: ${output.substring(0, 200)}`);
+      return `Unable to fetch weather data for ${city}.`;
+    }
     
     const data = JSON.parse(output);
     const current = data.current_condition[0];
@@ -67,9 +70,9 @@ async function getWeather(city: string): Promise<string> {
 - Humidity: ${current.humidity}%
 - Wind: ${current.windspeedMiles} mph from ${current.winddir16Point}
 - Visibility: ${current.visibilityMiles} miles
-- UV Index: ${current.uvIndex}`;
+// - UV Index: ${current.uvIndex}`;
   } catch (error) {
-    console.log(`[DEBUG] Exception: ${error}`);
+    console.error(`[ERROR] Exception: ${error}`);
     return `Error fetching weather: ${error instanceof Error ? error.message : String(error)}`;
   }
 }
@@ -139,11 +142,13 @@ async function main() {
     }
 
     try {
-      console.log("\n🔍 Fetching weather data...\n");
+      console.log("\n🔍 Fetching weather data...");
       
       // Extract city and fetch weather
       const city = extractCity(input);
       const weatherData = await getWeather(city);
+      
+      console.log("✓ Data received, generating response...\n");
       
       // Ask agent to provide a natural response with the weather data
       const event$ = agent.runTask(
