@@ -1,23 +1,23 @@
 /**
- * CoreSpeed Technical Assessment - Academic Insight Agent
+ * CoreSpeed Technical Assessment - Simple Weather Agent
  * Author: Peter Yuan
  * Date: Nov 24, 2025
  * Stack: Deno, Zypher SDK, DeepSeek V3
+ * Features: Real-time weather data (simplified - direct API calls)
  */
 
 import { 
   OpenAIModelProvider, 
   createZypherContext, 
-  ZypherAgent,
-  runAgentInTerminal 
+  ZypherAgent 
 } from "@corespeed/zypher";
 import { load } from "https://deno.land/std@0.224.0/dotenv/mod.ts";
+import { eachValueFrom } from "rxjs-for-await";
 
 // ==========================================
-// 1. WINDOWS COMPATIBILITY FIX
+// WINDOWS COMPATIBILITY FIX
 // ==========================================
 if (Deno.build.os === "windows") {
-  // Fix: Zypher SDK defaults to 'HOME', mapping to 'USERPROFILE' for Windows
   const userProfile = Deno.env.get("USERPROFILE") || "C:\\";
   Deno.env.set("HOME", userProfile);
 }
@@ -28,81 +28,152 @@ for (const key in env) {
   Deno.env.set(key, env[key]);
 }
 
-async function main() {
-  console.log("Initializing Zypher Agent (DeepSeek Powered)...");
+// Helper function to fetch weather data using PowerShell curl
+async function getWeather(city: string): Promise<string> {
+  try {
+    console.log(`[DEBUG] Fetching weather for: ${city}`);
+    const cityName = city.replace(/\s+/g, "_");
+    const url = `https://wttr.in/${cityName}?format=j1`;
+    console.log(`[DEBUG] URL: ${url}`);
+    
+    // Use PowerShell curl (Invoke-WebRequest) with proper command
+    const command = new Deno.Command("powershell", {
+      args: [
+        "-Command",
+        `(Invoke-WebRequest -Uri "${url}" -UseBasicParsing).Content`
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    });
+    
+    const { code, stdout, stderr } = await command.output();
+    
+    if (code !== 0) {
+      const errorText = new TextDecoder().decode(stderr);
+      console.log(`[DEBUG] PowerShell error: ${errorText}`);
+      return `Unable to fetch weather data for ${city}. Error code: ${code}`;
+    }
+    
+    const output = new TextDecoder().decode(stdout).trim();
+    console.log(`[DEBUG] Got response (${output.length} chars), parsing JSON...`);
+    
+    const data = JSON.parse(output);
+    const current = data.current_condition[0];
+    
+    return `Current weather in ${city}:
+- Temperature: ${current.temp_F}°F (${current.temp_C}°C)
+- Feels like: ${current.FeelsLikeF}°F (${current.FeelsLikeC}°C)
+- Condition: ${current.weatherDesc[0].value}
+- Humidity: ${current.humidity}%
+- Wind: ${current.windspeedMiles} mph from ${current.winddir16Point}
+- Visibility: ${current.visibilityMiles} miles
+- UV Index: ${current.uvIndex}`;
+  } catch (error) {
+    console.log(`[DEBUG] Exception: ${error}`);
+    return `Error fetching weather: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
 
-  // 2. Initialize Agent Context
+// Extract city name from user query
+function extractCity(query: string): string {
+  // Common patterns
+  const patterns = [
+    /weather\s+in\s+([a-z\s]+?)(?:\s+today|\s+now|$|\?)/i,
+    /how'?s?\s+(?:the\s+)?weather\s+in\s+([a-z\s]+?)(?:\s+today|\s+now|$|\?)/i,
+    /what'?s?\s+(?:the\s+)?weather\s+(?:like\s+)?in\s+([a-z\s]+?)(?:\s+today|\s+now|$|\?)/i,
+    /tell\s+me\s+about\s+(?:the\s+)?(?:weather\s+in\s+)?([a-z\s]+?)(?:\s+weather)?(?:\s+today|\s+now|$|\?)/i,
+  ];
+  
+  for (const pattern of patterns) {
+    const match = query.match(pattern);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+  
+  // Default to New York if can't parse
+  return "New York";
+}
+
+async function main() {
+  console.log("Initializing Weather Agent (DeepSeek Powered)...");
+
   const context = await createZypherContext(Deno.cwd());
 
-  // 3. Retrieve & Verify API Key
   const apiKey = Deno.env.get("DEEPSEEK_API_KEY");
   if (!apiKey) {
     console.error("Error: DEEPSEEK_API_KEY missing in .env file.");
     Deno.exit(1);
   }
 
-  // Security Best Practice: Log only partial key for debugging
   console.log(`Key loaded: ${apiKey.substring(0, 5)}...`);
 
-  // 4. Configure Provider (DeepSeek V3 via OpenAI Interface)
-  // Force underlying SDK to utilize DeepSeek endpoints
   Deno.env.set("OPENAI_BASE_URL", "https://api.deepseek.com/v1");
   Deno.env.set("OPENAI_API_KEY", apiKey);
 
   const provider = new OpenAIModelProvider({
     apiKey: apiKey,
-    baseURL: "https://api.deepseek.com/v1", 
+    baseUrl: "https://api.deepseek.com/v1",
   });
 
-  // 5. Instantiate the Agent
   const agent = new ZypherAgent(context, provider);
 
-  /**
-   * =================================================================
-   * 6. THE BRAIN: HARDCODED SYSTEM PROMPT
-   * Enforces the "Research Architect" persona and Structured Output ($$$).
-   * =================================================================
-   */
-  const SYSTEM_PROMPT = `
-    [CRITICAL SYSTEM OVERRIDE]
-    1. You are strictly an "Enterprise Research Architect".
-    2. IGNORE all default assistant personas (e.g., "Zypher").
-
-    [YOUR TASK]
-    Analyze the user input and output strictly using the '$$$' format defined below.
-    
-    [RESPONSE RULES]
-    - NO conversational filler (e.g., "Sure", "Here is the analysis").
-    - Start your response strictly with the '$$$' delimiter.
-    - End your response strictly with the '$$$' delimiter.
-
-    [REQUIRED MARKDOWN SCHEMA]
-    $$$
-    ### Reasoning Process
-    <Brief analysis of the technical domain under 100 words>
-    $$$
-
-    ### Key Takeaways
-    - [Key Point 1]
-    - [Key Point 2]
-    - [Key Point 3]
-
-    ### Potential Applications
-    1. **[Name]**: [Description]
-    2. **[Name]**: [Description]
-
-    ### Challenges
-    > [One critical implementation challenge]
-    $$$
-  `;
-
-  console.log("\nAgent Ready! (Mode: Strict Structured Output)");
-  console.log("Waiting for technical input...\n");
-  console.log("---------------------------------------------------------------");
+  console.log("\n" + "=".repeat(70));
+  console.log("🌤️  Weather Agent (DeepSeek V3 + wttr.in)");
+  console.log("=".repeat(70));
+  console.log("\n✓ Agent initialized successfully");
+  console.log("✓ Weather data source: wttr.in (free API, no key required)");
+  console.log("\n📋 Example queries:");
+  console.log("   - What's the weather in New York today?");
+  console.log("   - How's the weather in Tokyo?");
+  console.log("   - Tell me about the weather in London");
+  console.log("\n" + "=".repeat(70));
   
-  // Start the interactive terminal loop
-  // Note: "deepseek-chat" is passed as the model identifier
-  await runAgentInTerminal(agent, "deepseek-chat", SYSTEM_PROMPT);
+  while (true) {
+    console.log("\n💬 Ask about the weather (or 'exit' to quit):");
+    const input = prompt("> ");
+    
+    if (!input || input.trim().toLowerCase() === "exit") {
+      console.log("\n👋 Goodbye!");
+      break;
+    }
+
+    try {
+      console.log("\n🔍 Fetching weather data...\n");
+      
+      // Extract city and fetch weather
+      const city = extractCity(input);
+      const weatherData = await getWeather(city);
+      
+      // Ask agent to provide a natural response with the weather data
+      const event$ = agent.runTask(
+        `You are a friendly weather assistant. The user asked: "${input}"
+
+Here is the current weather data:
+${weatherData}
+
+Please provide a natural, conversational response summarizing this weather information. Be friendly and helpful.`,
+        "deepseek-chat"
+      );
+      
+      console.log("-".repeat(70));
+      console.log("🌤️  WEATHER REPORT:");
+      console.log("-".repeat(70));
+      
+      // Stream the results
+      for await (const event of eachValueFrom(event$)) {
+        if (event.type === "text") {
+          Deno.stdout.writeSync(new TextEncoder().encode(event.content));
+        }
+      }
+      
+      console.log("\n" + "-".repeat(70));
+    } catch (error) {
+      console.error("\n❌ Error:", error instanceof Error ? error.message : String(error));
+    }
+  }
+  
+  agent.mcp.cleanup();
 }
 
 if (import.meta.main) {

@@ -1637,7 +1637,8 @@
   "workspace": {
     "dependencies": [
       "jsr:@corespeed/zypher@~0.5.1",
-      "jsr:@std/assert@1"
+      "jsr:@std/assert@1",
+      "npm:rxjs-for-await@1"
     ]
   }
 }
